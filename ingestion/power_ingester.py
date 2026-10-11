@@ -23,6 +23,10 @@ from sqlalchemy.orm import Session
 
 from db.database import SessionLocal
 from ingestion.stream_client import DatacenterStream
+from lib.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class PowerIngester:
@@ -41,4 +45,5 @@ class PowerIngester:
     def run(self) -> None:
         """Subscribe to the stream, aggregate the 5-second readings into
         per-minute averages, and persist them to ``power_readings`` — robustly."""
-        raise NotImplementedError("Implement the power ingester.")
+        for event in self._stream.subscribe(self._token, self._data_center_id):
+          logger.info(f"received {event}")

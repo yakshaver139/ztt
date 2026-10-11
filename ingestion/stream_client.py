@@ -7,8 +7,11 @@ from typing import Iterator, Protocol, runtime_checkable
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
+from lib.logging import get_logger
+
 Event = dict
 
+logger = get_logger(__name__)
 
 class StreamAuthError(Exception):
     """Non-retryable: the server rejected the token / data center (close 1008)."""
@@ -39,6 +42,7 @@ class RealDatacenterStream:
                     raise StreamAuthError(f"authentication failed: {ack!r}")
                 for raw in ws:
                     event = json.loads(raw)
+                    logger.info(parse_event(event))
                     if "metrics" in event:
                         yield event
         except ConnectionClosed as exc:

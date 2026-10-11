@@ -34,11 +34,25 @@ db/         database.py (SQLite), models.py (the schema above)
 api/        FastAPI app — routers / services / repositories (thin layering)
 ingestion/  telemetry stream client + power/weather ingesters
 jobs/       runnable entrypoints: seed_datacenter.py, run_power_ingest.py
-lib/        shared helpers (e.g. lib/retry — reconnect-with-backoff)
+lib/        shared helpers (e.g. lib/retry and lib/logging)
 ```
 
 Packages sit at the repo root; imports are top-level (`db`, `api`, `ingestion`,
 `jobs`, `lib`). Run Python from the repo root.
+
+## Logging
+
+Use the shared logger in any module:
+
+```python
+from lib.logging import get_logger
+
+logger = get_logger(__name__)
+logger.info("Application started")
+```
+
+Logs go to stderr at INFO level by default. If the host application has already
+configured Python logging, that configuration takes precedence.
 
 ## Quick start
 Set up the model data center. This will populate racks, power devices, suites, etc.
