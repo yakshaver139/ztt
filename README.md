@@ -77,6 +77,7 @@ make ingest
 with metrics; the collector commits each as JSON to `data/power_inbox.db`. The worker
 claims pending or unfinished events, validates them, deduplicates by device and
 timestamp, and writes one average per device/minute to `data/model_dc.db`.
+Run `make kill-worker` in another terminal to kill the worker and watch the supervisor restart it.
 Minutes close 30 seconds after their end by default. Change this with
 `BMS_ALLOWED_LATENESS_SECONDS`; acknowledged inbox events are retained for one
 hour by default (`BMS_INBOX_RETENTION_HOURS`). A completed minute and its
@@ -98,6 +99,15 @@ Add the API server when needed:
 pip install -e '.[api]'
 make run-api              # http://localhost:8000/docs
 ```
+
+Open **http://localhost:8000/dashboard** for a live, five-second polling view of
+the latest finalized minute. It shows rack load against capacity, a per-hall rack
+PDU heat map, coverage, snapshot age, capacity breaches, inbox backlog, and
+retained accept/reject counts. Use `?datacenter_id=1` to choose a datacenter.
+The snapshot stays blank until a minute is finalized (normally 30 seconds after
+its end). Missing devices stay marked as missing. Rejection counts begin with
+frames processed after the inbox adds its `result` column; older acknowledged
+frames appear as `legacy` until cleanup removes them.
 
 The application database and inbox are separate SQLite files under `data/`
 (git-ignored). `make clean` deletes both, and `make seed` rebuilds the

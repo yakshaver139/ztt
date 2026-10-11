@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datacenter live view</title>
+  <style>
+    :root { font: 15px system-ui, sans-serif; color: #e9edf4; background: #101724; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; max-width: 1500px; margin-inline: auto; }
+    header, .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font-size: 28px; }
+    h2 { margin: 0 0 16px; font-size: 18px; }
+    p { color: #a7b4c8; }
+    .muted, small { color: #a7b4c8; }
+    #status { text-align: right; }
+    .error { color: #ff9c9c; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 22px 0; }
+    .card, section { background: #1b2535; border: 1px solid #344257; border-radius: 10px; padding: 18px; }
+    .card strong { display: block; font-size: 26px; margin: 7px 0; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 14px; }
+    section { margin-bottom: 14px; min-width: 0; }
+    select { background: #101724; color: inherit; padding: 7px 10px; border: 1px solid #52637a; border-radius: 6px; }
+    .bar-row { display: grid; grid-template-columns: 110px minmax(80px, 1fr) 140px; gap: 10px; align-items: center; margin: 7px 0; font-size: 13px; }
+    .bar { height: 14px; background: #344257; border-radius: 4px; overflow: hidden; }
+    .fill { height: 100%; }
+    .low { background: #54bd94; } .medium { background: #e9bb57; }
+    .high { background: #f28a4d; } .over { background: #ef6168; }
+    .missing { background: #344257; color: #a7b4c8; }
+    .heat-scroll { max-height: 600px; overflow: auto; }
+    .heatmap { display: grid; grid-template-columns: 44px repeat(8, minmax(42px, 1fr)); gap: 4px; min-width: 440px; }
+    .heatmap .row-label { align-self: center; color: #a7b4c8; font-size: 12px; }
+    .cell { min-height: 31px; border: 0; border-radius: 4px; color: #101724; font: 600 11px system-ui, sans-serif; cursor: default; }
+    .cell.missing { color: #a7b4c8; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; font-size: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .swatch { width: 12px; height: 12px; border-radius: 2px; }
+    .flow { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 16px; }
+    .flow div { background: #101724; border-radius: 6px; padding: 10px 14px; min-width: 110px; }
+    .flow strong { display: block; font-size: 19px; }
+    .outcomes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .outcomes span { background: #2a384c; padding: 6px 9px; border-radius: 5px; font-size: 13px; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .cards { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 550px) { body { padding: 12px; } header { display: block; } #status { text-align: left; } .bar-row { grid-template-columns: 85px 1fr; } .bar-row small { grid-column: 2; } }
+  </style>
+</head>
+<body>
+  <header><div><h1 id="title">Datacenter live view</h1><p>Latest finalized power minute · refreshes every 5 seconds</p></div><div id="status" role="status">Connecting…</div></header>
+  <div class="cards" aria-label="Current snapshot metrics">
+    <div class="card"><span class="muted">Power observed</span><strong id="load">—</strong><small>Across reporting racks</small></div>
+    <div class="card"><span class="muted">Device coverage</span><strong id="coverage">—</strong><small id="coverage-detail">At snapshot minute</small></div>
+    <div class="card"><span class="muted">Over capacity</span><strong id="over-capacity">—</strong><small>Reporting rack PDUs</small></div>
+    <div class="card"><span class="muted">Snapshot age</span><strong id="age">—</strong><small id="minute">No finalized minute</small></div>
+  </div>
+  <div class="layout">
+    <section>
+      <div class="section-head"><h2>Rack load versus capacity</h2><select id="suite" aria-label="Select hall"></select></div>
+      <p>20 most utilized racks in the selected hall. Each track is the rack PDU's rated capacity.</p>
+      <div id="bars"></div>
+    </section>
+    <section>
+      <h2>Device usage heat map</h2>
+      <p>Rack PDUs by hall row and position. Hover a cell for the load and device ID.</p>
+      <div class="heat-scroll"><div id="heatmap" class="heatmap"></div></div>
+      <div class="legend"><span><i class="swatch missing"></i>No reading</span><span><i class="swatch low"></i>&lt;50%</span><span><i class="swatch medium"></i>50–79%</span><span><i class="swatch high"></i>80–99%</span><span><i class="swatch over"></i>≥100%</span></div>
+    </section>
+  </div>
+  <section>
+    <h2>Ingestion visibility</h2>
+    <div id="flow" class="flow"></div>
+    <p id="inbox-times"></p>
+    <div id="outcomes" class="outcomes"></div>
+    <p><small>Counts cover frames still retained in the inbox. Acknowledged frames expire after cleanup; duplicate frames are ignored, while power spikes remain in the averages.</small></p>
+  </section>
+  <script>
+    const dcId = new URLSearchParams(location.search).get('datacenter_id') || '1';
+    const $ = id => document.getElementById(id);
+    let current;
+
+    function age(iso) {
+      if (!iso) return '—';
+      const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
+      return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`;
+    }
+    function number(value, digits = 1) { return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits }); }
+    function pct(rack) { return rack.load_kw == null || !rack.capacity_kw ? null : 100 * rack.load_kw / rack.capacity_kw; }
+    function level(value) { return value == null ? 'missing' : value >= 100 ? 'over' : value >= 80 ? 'high' : value >= 50 ? 'medium' : 'low'; }
+    function item(tag, className, label) {
+      const node = document.createElement(tag);
+      node.className = className;
+      node.textContent = label;
+      return node;
+    }
+    function renderHall() {
+      if (!current) return;
+      const racks = current.racks.filter(r => r.suite === $('suite').value);
+      const bars = $('bars'); bars.replaceChildren();
+      const reported = racks.filter(r => pct(r) != null).sort((a, b) => pct(b) - pct(a)).slice(0, 20);
+      if (!reported.length) bars.append(item('p', 'muted', 'No finalized readings for this hall yet.'));
+      for (const rack of reported) {
+        const value = pct(rack);
+        const line = item('div', 'bar-row', '');
+        line.append(item('span', '', rack.name || `Rack ${rack.rack_id}`));
+        const track = item('div', 'bar', '');
+        const fill = item('div', `fill ${level(value)}`, '');
+        fill.style.width = `${Math.min(100, Math.max(0, value))}%`;
+        track.append(fill); line.append(track);
+        line.append(item('small', '', `${number(rack.load_kw)} / ${number(rack.capacity_kw)} kW · ${number(value, 0)}%`));
+        bars.append(line);
+      }
+      const heatmap = $('heatmap'); heatmap.replaceChildren();
+      const byPosition = new Map(racks.map(r => [`${r.row}:${r.position}`, r]));
+      const rows = [...new Set(racks.map(r => r.row).filter(Boolean))].sort();
+      const positions = [...new Set(racks.map(r => r.position).filter(v => v != null))].sort((a, b) => a - b);
+      heatmap.style.gridTemplateColumns = `44px repeat(${positions.length || 8}, minmax(42px, 1fr))`;
+      heatmap.append(item('span', 'row-label', 'Row'));
+      positions.forEach(p => heatmap.append(item('span', 'row-label', String(p))));
+      for (const row of rows) {
+        heatmap.append(item('span', 'row-label', row));
+        for (const position of positions) {
+          const rack = byPosition.get(`${row}:${position}`);
+          const value = rack ? pct(rack) : null;
+          const cell = item('button', `cell ${level(value)}`, value == null ? '—' : `${number(value, 0)}%`);
+          cell.type = 'button';
+          cell.title = rack ? `${rack.name || `Rack ${rack.rack_id}`} · device ${rack.device_id || 'none'} · ${rack.load_kw == null ? 'no reading' : `${number(rack.load_kw)} / ${number(rack.capacity_kw)} kW`}` : 'Empty position';
+          heatmap.append(cell);
+        }
+      }
+    }
+    function render(data) {
+      current = data;
+      $('title').textContent = `${data.datacenter || 'Datacenter'} · live view`;
+      const racks = data.racks, active = racks.filter(r => r.load_kw != null);
+      $('load').textContent = `${number(active.reduce((sum, r) => sum + r.load_kw, 0), 0)} kW`;
+      $('coverage').textContent = `${active.length} / ${racks.length}`;
+      $('coverage-detail').textContent = `${racks.length ? number(100 * active.length / racks.length, 0) : 0}% of rack PDUs reporting`;
+      $('over-capacity').textContent = String(active.filter(r => pct(r) >= 100).length);
+      $('age').textContent = age(data.minute);
+      $('minute').textContent = data.minute ? `Minute: ${new Date(data.minute).toLocaleString()}` : 'No finalized minute';
+      $('status').className = data.minute && Date.now() - Date.parse(data.minute) > 120000 ? 'error' : '';
+      $('status').textContent = `Updated ${new Date(data.generated_at).toLocaleTimeString()} · ${data.minute ? 'snapshot ' + age(data.minute) + ' old' : 'awaiting readings'}`;
+      const suites = [...new Set(racks.map(r => r.suite))];
+      const selected = $('suite').value;
+      $('suite').replaceChildren(...suites.map(name => { const option = item('option', '', name); option.value = name; return option; }));
+      if (suites.includes(selected)) $('suite').value = selected;
+      renderHall();
+      const counts = data.inbox.counts;
+      const rejected = Object.entries(counts).filter(([key]) => !['accepted', 'pending', 'in_flight', 'legacy', 'finalized'].includes(key)).reduce((sum, [, value]) => sum + value, 0);
+      const flow = $('flow'); flow.replaceChildren();
+      for (const [label, value] of [['Retained', Object.values(counts).reduce((a, b) => a + b, 0)], ['Accepted', counts.accepted || 0], ['Rejected', rejected], ['Replay skipped', counts.finalized || 0], ['Queued', (counts.pending || 0) + (counts.in_flight || 0)]]) {
+        const box = item('div', '', label); box.prepend(item('strong', '', number(value, 0))); flow.append(box);
+      }
+      $('inbox-times').textContent = `Latest receipt: ${data.inbox.latest_received_at ? new Date(data.inbox.latest_received_at).toLocaleString() + ' (' + age(data.inbox.latest_received_at) + ' ago)' : 'none'} · Oldest unacknowledged: ${data.inbox.oldest_unacked_at ? new Date(data.inbox.oldest_unacked_at).toLocaleString() + ' (' + age(data.inbox.oldest_unacked_at) + ' old)' : 'none'}`;
+      const outcomes = $('outcomes'); outcomes.replaceChildren();
+      for (const [reason, count] of Object.entries(counts).sort((a, b) => b[1] - a[1])) outcomes.append(item('span', '', `${reason.replaceAll('_', ' ')}: ${number(count, 0)}`));
+    }
+    async function refresh() {
+      try {
+        const response = await fetch(`/api/datacenters/${encodeURIComponent(dcId)}/snapshot`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Snapshot request failed (${response.status})`);
+        render(await response.json());
+      } catch (error) {
+        $('status').className = 'error';
+        $('status').textContent = `${error.message} · retrying`;
+      } finally { setTimeout(refresh, 5000); }
+    }
+    $('suite').addEventListener('change', renderHall);
+    refresh();
+  </script>
+</body>
+</html>

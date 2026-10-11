@@ -12,7 +12,9 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from db.models import Base, Datacenter, FinalizedPowerMinute, Owner, PowerDevice, PowerReading
+from api.routers.dashboard import snapshot
+from db.models import (Base, Datacenter, FinalizedPowerMinute, Owner, PowerDevice,
+                       PowerReading, Rack, Space, Suite)
 from ingestion.inbox import SQLiteInbox
 from ingestion.power_ingester import PowerIngester, PowerWorker, parse_power_event
 from ingestion.stream_client import RealDatacenterStream
@@ -246,6 +248,51 @@ class PowerIngestionTest(unittest.TestCase):
                 db.execute("UPDATE inbox SET acked_at = '2020-01-01T00:00:00+00:00' WHERE id = 1")
         self.assertEqual(self.inbox.cleanup(self.now - timedelta(days=1)), 1)
         self.assertEqual(self.statuses(), ["pending"])
+
+    def test_snapshot_uses_one_minute_and_reports_retained_outcomes(self) -> None:
+        previous = (self.minute - timedelta(minutes=1)).replace(tzinfo=None)
+        minute = self.minute.replace(tzinfo=None)
+        with self.sessions() as session:
+            session.add(Suite(id=1, datacenter_id=1, name="Hall A"))
+            session.add(PowerDevice(id=2, datacenter_id=1, suite_id=1,
+                                    device_type="rack_pdu", name="device 2", capacity_limit_kw=15))
+            session.add_all([
+                Space(id=1, suite_id=1, row="AA", position=1, power_device_id=1),
+                Space(id=2, suite_id=1, row="AA", position=2, power_device_id=2),
+                Rack(id=1, suite_id=1, space_id=1, name="rack 1"),
+                Rack(id=2, suite_id=1, space_id=2, name="rack 2"),
+                FinalizedPowerMinute(datacenter_id=1, timestamp=minute),
+                PowerReading(device_id=1, timestamp=minute, watts=16000),
+                PowerReading(device_id=2, timestamp=previous, watts=1000),
+            ])
+            session.commit()
+        self.inbox.append(1, b"bad")
+        self.inbox.ack([1], "invalid")
+        self.inbox.append(1, b"waiting")
+        with self.sessions() as session, patch("api.routers.dashboard.SQLiteInbox",
+                                                return_value=self.inbox):
+            result = snapshot(1, session)
+        self.assertEqual([rack["load_kw"] for rack in result["racks"]], [16, None])
+        self.assertEqual(result["inbox"]["counts"], {"invalid": 1, "pending": 1})
+        self.assertEqual(result["minute"], self.minute.isoformat().replace("+00:00", "Z"))
+
+    def test_existing_inbox_keeps_frames_when_result_column_is_added(self) -> None:
+        path = self.inbox_path.parent / "legacy.db"
+        with closing(sqlite3.connect(path)) as db:
+            with db:
+                db.execute("""CREATE TABLE inbox (
+                    id INTEGER PRIMARY KEY, datacenter_id INTEGER NOT NULL,
+                    payload BLOB NOT NULL, received_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending', acked_at TEXT
+                )""")
+                db.execute("""INSERT INTO inbox VALUES
+                    (1, 1, X'6F6C64', '2026-01-01T00:00:00+00:00', 'acked',
+                     '2026-01-01T00:00:00+00:00')""")
+        upgraded = SQLiteInbox(path)
+        self.assertEqual(upgraded.summary(1)["counts"], {"legacy": 1})
+        upgraded.append(1, b"new frame")
+        upgraded.ack([2], "invalid")
+        self.assertEqual(upgraded.summary(1)["counts"], {"legacy": 1, "invalid": 1})
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ class Inbox(Protocol):
 
     def claim(self, datacenter_id: int, after_id: int, limit: int) -> list[Message]: ...
 
-    def ack(self, ids: Iterable[int]) -> None: ...
+    def ack(self, ids: Iterable[int], result: str = "accepted") -> None: ...
 
     def cleanup(self, before: datetime) -> int: ...
 
@@ -36,6 +36,7 @@ class SQLiteInbox:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS inbox (
                     id INTEGER PRIMARY KEY,
@@ -43,9 +44,12 @@ class SQLiteInbox:
                     payload BLOB NOT NULL,
                     received_at TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending',
-                    acked_at TEXT
+                    acked_at TEXT,
+                    result TEXT
                 )
             """)
+            if "result" not in {row[1] for row in db.execute("PRAGMA table_info(inbox)")}:
+                db.execute("ALTER TABLE inbox ADD COLUMN result TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS ix_inbox_claim ON inbox (datacenter_id, status, id)"
             )
@@ -85,7 +89,7 @@ class SQLiteInbox:
             )
         return [Message(row[0], row[1], datetime.fromisoformat(row[2])) for row in rows]
 
-    def ack(self, ids: Iterable[int]) -> None:
+    def ack(self, ids: Iterable[int], result: str = "accepted") -> None:
         ids = list(ids)
         if not ids:
             return
@@ -93,10 +97,25 @@ class SQLiteInbox:
             for start in range(0, len(ids), 500):
                 batch = ids[start : start + 500]
                 db.execute(
-                    f"UPDATE inbox SET status = 'acked', acked_at = ? "
+                    f"UPDATE inbox SET status = 'acked', acked_at = ?, result = ? "
                     f"WHERE id IN ({','.join('?' for _ in batch)})",
-                    (datetime.now(timezone.utc).isoformat(), *batch),
+                    (datetime.now(timezone.utc).isoformat(), result, *batch),
                 )
+
+    def summary(self, datacenter_id: int) -> dict:
+        """Counts are for retained frames; acknowledged frames expire after cleanup."""
+        with self._connect() as db:
+            counts = dict(db.execute("""
+                SELECT CASE WHEN status = 'acked' THEN COALESCE(result, 'legacy')
+                            ELSE status END, COUNT(*)
+                FROM inbox WHERE datacenter_id = ? GROUP BY 1
+            """, (datacenter_id,)))
+            latest, oldest_unacked = db.execute("""
+                SELECT MAX(received_at), MIN(CASE WHEN status != 'acked' THEN received_at END)
+                FROM inbox WHERE datacenter_id = ?
+            """, (datacenter_id,)).fetchone()
+        return {"counts": counts, "latest_received_at": latest,
+                "oldest_unacked_at": oldest_unacked}
 
     def cleanup(self, before: datetime) -> int:
         with self._connect() as db:

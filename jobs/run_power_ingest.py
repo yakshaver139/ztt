@@ -54,9 +54,12 @@ def main() -> None:
     children = {name: ctx.Process(target=target, args=args, name=name)
                 for name, (target, args) in targets.items()}
     previous_sigterm = signal.signal(signal.SIGTERM, _stop)
+    previous_sigurg = signal.getsignal(signal.SIGURG)
     try:
         for child in children.values():
             child.start()
+        # SIGURG is ignored by supervisors started before this handler existed.
+        signal.signal(signal.SIGURG, lambda _signum, _frame: children["worker"].kill())
         while True:
             time.sleep(1)
             for name, child in list(children.items()):
@@ -74,6 +77,7 @@ def main() -> None:
         logger.info("stopping power ingestion")
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGURG, previous_sigurg)
         for child in children.values():
             if child.pid is None:
                 continue

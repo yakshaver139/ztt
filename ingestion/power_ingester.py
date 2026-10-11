@@ -150,14 +150,14 @@ class PowerWorker:
     def _reject(self, message: Message, reason: str) -> None:
         self.stats[reason] += 1
         logger.debug("dropping inbox message %s: %s", message.id, reason)
-        self._inbox.ack([message.id])
+        self._inbox.ack([message.id], reason)
 
     def _handle(self, message: Message, session: Session) -> None:
         sample = parse_power_event(message.payload)
         if sample is None:
             return self._reject(message, "invalid")
         device_id, timestamp, watts = sample
-        if device_id not in self._devices:
+        if self._devices and device_id not in self._devices:
             return self._reject(message, "unknown_device")
         if timestamp > message.received_at + timedelta(minutes=1):
             return self._reject(message, "future_timestamp")

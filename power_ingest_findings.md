@@ -1,0 +1,12 @@
+# What the retained BMS feed shows
+
+The latest [diagnostic run](./diag) on 11 October 2026 covers 55,634 retained metric frames and 4,000 stored device-minute readings across four finalized minutes. Run `sqlite3 -bail -ifexists -header -column data/model_dc.db < power_ingest_diagnostics.sql` from the repository root to refresh these figures.
+
+- **Exact repeats:** 5,067 frames repeated the same device, observation time, and power value; none conflicted. The worker deduplicates these. [Repeat-reading query](./power_ingest_diagnostics.sql#L77-L93).
+- **Delayed readings:** Receipt lag reached 12.347 seconds; 20,843 frames arrived more than one second after observation. The current 30-second lateness allowance covers the delays observed in this capture. This run alone does not establish out-of-order delivery. [Lag query](./power_ingest_diagnostics.sql#L52-L75).
+- **Implausible power spikes:** 1,132 raw readings exceeded 100 kW, while the seeded rack-PDU capacity is 15 kW. The worker accepts these values; 615 of 4,000 stored averages exceeded their device's capacity. Device 347's highest stored minute averaged 489.074 kW. [Raw-value query](./power_ingest_diagnostics.sql#L52-L75); [stored-capacity query](./power_ingest_diagnostics.sql#L136-L141); [highest-average query](./power_ingest_diagnostics.sql#L153-L159).
+- **Uneven sample coverage:** Device-minutes contain 1–12 distinct observation times. The first and last minutes of this short capture are partial, so low counts do not by themselves prove missing BMS readings. No device-minute exceeds 12 observations in this run. [Sample-count query](./power_ingest_diagnostics.sql#L108-L124); [minute-volume query](./power_ingest_diagnostics.sql#L95-L106).
+
+The final queries now [select the largest capacity breach](./power_ingest_diagnostics.sql#L5-L18) and inspect that rack and minute. In this snapshot, rack 347 had two unique raw readings, 9.612 and 968.535 kW; the stored average is 489.074 kW. Excluding the spike yields 9.612 kW. This exclusion illustrates the effect; it is not an ingest rule. [Selected rack](./power_ingest_diagnostics.sql#L161-L166); [raw frames](./power_ingest_diagnostics.sql#L176-L186); [mean comparison](./power_ingest_diagnostics.sql#L188-L208).
+
+**Limits:** The inbox contains no malformed JSON, but the [stream client](./ingestion/stream_client.py#L41-L43) parses and filters frames before storing them. This capture does not establish whether BMS disconnects occur. [Retained-frame query](./power_ingest_diagnostics.sql#L29-L50).
