@@ -73,6 +73,25 @@ export BMS_DATACENTER_ID=1
 make ingest
 ```
 
+`make ingest` supervises two processes. The stream client yields only parsed events
+with metrics; the collector commits each as JSON to `data/power_inbox.db`. The worker
+claims pending or unfinished events, validates them, deduplicates by device and
+timestamp, and writes one average per device/minute to `data/model_dc.db`.
+Minutes close 30 seconds after their end by default. Change this with
+`BMS_ALLOWED_LATENESS_SECONDS`; acknowledged inbox events are retained for one
+hour by default (`BMS_INBOX_RETENTION_HOURS`). A completed minute and its
+readings commit together. Only then are its stored events acknowledged, so a worker
+restart can replay unfinished work without writing the minute twice.
+
+The worker logs rejected frames by reason, minute completions, and periodic
+counters. Invalid, unknown-device, future-dated (over one minute), duplicate,
+and late frames are acknowledged without contributing to an average. A frame
+received after a minute's deadline is late even if the worker was backlogged.
+The BMS has no replay: frames sent while the collector is disconnected, or lost
+before the inbox commit, cannot be recovered. Run `make clean` only when both
+processes are stopped and you intend to discard all stored telemetry. `make seed`
+recreates the application tables but does not clear the inbox.
+
 Add the API server when needed:
 
 ```bash
@@ -80,5 +99,6 @@ pip install -e '.[api]'
 make run-api              # http://localhost:8000/docs
 ```
 
-The database is a single SQLite file at `data/model_dc.db` (git-ignored);
-`make clean` deletes it and `make seed` rebuilds it.
+The application database and inbox are separate SQLite files under `data/`
+(git-ignored). `make clean` deletes both, and `make seed` rebuilds the
+application database.

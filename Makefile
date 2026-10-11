@@ -23,3 +23,4 @@ run-api:
 
 clean:
 	rm -f data/model_dc.db
+	rm -f data/power_inbox.db

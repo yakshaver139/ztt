@@ -237,6 +237,15 @@ class PowerReading(Base):
     )
 
 
+class FinalizedPowerMinute(Base):
+    """A committed minute; unacked inbox messages can be safely replayed."""
+
+    __tablename__ = "finalized_power_minutes"
+
+    datacenter_id = Column(Integer, ForeignKey("datacenters.id"), primary_key=True)
+    timestamp = Column(DateTime, primary_key=True)  # naive UTC, like PowerReading
+
+
 class WeatherReading(Base):
     """Historical weather at a datacenter's location, ingested by the weather
     ingester (see ``ingestion/weather_ingester.py``). Provisional — the schema
