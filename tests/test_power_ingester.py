@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from api.routers.dashboard import snapshot
 from db.models import (Base, Datacenter, FinalizedPowerMinute, Owner, PowerDevice,
-                       PowerReading, Rack, Space, Suite)
+                       PowerMinuteCoverage, PowerReading, Rack, Space, Suite)
 from ingestion.inbox import SQLiteInbox
 from ingestion.power_ingester import PowerIngester, PowerWorker, parse_power_event
 from ingestion.stream_client import RealDatacenterStream
@@ -47,9 +47,9 @@ class PowerIngestionTest(unittest.TestCase):
             "metrics": {"active_power_kw": watts / 1000},
         }).encode()
 
-    def worker(self) -> PowerWorker:
+    def worker(self, *, filter_spikes: bool = True) -> PowerWorker:
         return PowerWorker(1, SQLiteInbox(self.inbox_path), self.sessions,
-                           clock=lambda: self.now)
+                           filter_spikes=filter_spikes, clock=lambda: self.now)
 
     def statuses(self) -> list[str]:
         with closing(sqlite3.connect(self.inbox_path)) as db:
@@ -150,6 +150,65 @@ class PowerIngestionTest(unittest.TestCase):
             self.assertEqual(session.query(FinalizedPowerMinute).count(), 1)
         self.assertEqual(self.statuses(), ["acked"] * 5)
 
+    def test_repeats_spikes_delays_and_uneven_coverage(self) -> None:
+        with self.sessions() as session:
+            PowerMinuteCoverage.__table__.drop(bind=session.get_bind())
+        with self.sessions() as session:
+            session.add(PowerDevice(id=2, datacenter_id=1, device_type="rack_pdu",
+                                    name="other rack", capacity_limit_kw=15))
+            session.commit()
+        for payload in (self.event(5, 1000), self.event(5, 1000),
+                        self.event(5, 2000), self.event(10, 968535),
+                        self.event(10, 5000), self.event(20, 9000),
+                        self.event(5, 2000, 2)):
+            self.inbox.append(1, payload)
+        with closing(sqlite3.connect(self.inbox_path)) as db:
+            with db:
+                db.execute("UPDATE inbox SET received_at = ?",
+                           ((self.minute + timedelta(seconds=25)).isoformat(),))
+
+        worker = self.worker()
+        with self.assertLogs("ingestion.power_ingester", level="INFO") as logs:
+            worker.process_once()
+            self.now = self.minute + timedelta(minutes=2)
+            worker.process_once()
+        with self.sessions() as session:
+            readings = {r.device_id: r.watts for r in session.scalars(select(PowerReading))}
+            coverage = session.get(PowerMinuteCoverage,
+                                   (1, self.minute.replace(tzinfo=None)))
+        self.assertEqual(readings, {1: 5000, 2: 2000})
+        self.assertEqual(coverage.sample_counts, {"1": 1, "3": 1})
+        self.assertEqual(worker.stats["delayed"], 4)
+        with closing(sqlite3.connect(self.inbox_path)) as db:
+            results = [row[0] for row in db.execute("SELECT result FROM inbox ORDER BY id")]
+        self.assertEqual(results, ["accepted", "duplicate", "conflicting_duplicate",
+                                   "spike", "accepted", "accepted", "accepted"])
+        self.assertTrue(any("power spike ignored" in line for line in logs.output))
+        self.assertTrue(any("conflicting power reading" in line for line in logs.output))
+        self.assertTrue(any("devices=2/2 sample_counts={1: 1, 3: 1}" in line
+                            for line in logs.output))
+
+    def test_spike_only_minute_is_dropped_without_finalization(self) -> None:
+        self.inbox.append(1, self.event(5, 968535))
+        worker = self.worker()
+        worker.process_once()
+        self.now = self.minute + timedelta(minutes=2)
+        worker.process_once()
+        with self.sessions() as session:
+            self.assertEqual(session.query(PowerReading).count(), 0)
+            self.assertEqual(session.query(FinalizedPowerMinute).count(), 0)
+        self.assertEqual(self.statuses(), ["acked"])
+
+    def test_spike_filter_can_be_disabled(self) -> None:
+        self.inbox.append(1, self.event(5, 968535))
+        worker = self.worker(filter_spikes=False)
+        worker.process_once()
+        self.now = self.minute + timedelta(minutes=2)
+        worker.process_once()
+        with self.sessions() as session:
+            self.assertEqual(session.query(PowerReading).one().watts, 968535)
+        self.assertEqual(worker.stats["spike"], 0)
+
     def test_commit_before_ack_replays_without_second_result(self) -> None:
         self.inbox.append(1, self.event(5, 1000))
         worker = self.worker()
@@ -165,6 +224,7 @@ class PowerIngestionTest(unittest.TestCase):
         with self.sessions() as session:
             self.assertEqual(session.query(PowerReading).count(), 1)
             self.assertEqual(session.query(FinalizedPowerMinute).count(), 1)
+            self.assertEqual(session.query(PowerMinuteCoverage).count(), 1)
         self.assertEqual(self.statuses(), ["acked"])
 
     def test_failed_application_commit_leaves_message_for_recovery(self) -> None:
@@ -178,12 +238,14 @@ class PowerIngestionTest(unittest.TestCase):
         self.assertEqual(self.statuses(), ["in_flight"])
         with self.sessions() as session:
             self.assertEqual(session.query(PowerReading).count(), 0)
+            self.assertEqual(session.query(PowerMinuteCoverage).count(), 0)
 
         restarted = self.worker()
         restarted.process_once()
         restarted.process_once()
         with self.sessions() as session:
             self.assertEqual(session.query(PowerReading).one().watts, 1000)
+            self.assertEqual(session.query(PowerMinuteCoverage).count(), 1)
         self.assertEqual(self.statuses(), ["acked"])
 
     def test_late_and_future_samples_are_acked_without_results(self) -> None:
@@ -256,12 +318,18 @@ class PowerIngestionTest(unittest.TestCase):
             session.add(Suite(id=1, datacenter_id=1, name="Hall A"))
             session.add(PowerDevice(id=2, datacenter_id=1, suite_id=1,
                                     device_type="rack_pdu", name="device 2", capacity_limit_kw=15))
+            session.add(PowerDevice(id=3, datacenter_id=1, suite_id=1,
+                                    device_type="rack_pdu", name="device 3", capacity_limit_kw=15))
             session.add_all([
                 Space(id=1, suite_id=1, row="AA", position=1, power_device_id=1),
                 Space(id=2, suite_id=1, row="AA", position=2, power_device_id=2),
+                Space(id=3, suite_id=1, row="AA", position=3, power_device_id=3),
                 Rack(id=1, suite_id=1, space_id=1, name="rack 1"),
                 Rack(id=2, suite_id=1, space_id=2, name="rack 2"),
+                Rack(id=3, suite_id=1, space_id=3, name="rack 3"),
                 FinalizedPowerMinute(datacenter_id=1, timestamp=minute),
+                PowerMinuteCoverage(datacenter_id=1, timestamp=minute,
+                                    sample_counts={2: 1}),
                 PowerReading(device_id=1, timestamp=minute, watts=16000),
                 PowerReading(device_id=2, timestamp=previous, watts=1000),
             ])
@@ -272,9 +340,17 @@ class PowerIngestionTest(unittest.TestCase):
         with self.sessions() as session, patch("api.routers.dashboard.SQLiteInbox",
                                                 return_value=self.inbox):
             result = snapshot(1, session)
-        self.assertEqual([rack["load_kw"] for rack in result["racks"]], [16, None])
+        self.assertEqual([rack["load_kw"] for rack in result["racks"]], [16, None, None])
+        self.assertEqual([rack["last_reading_at"] for rack in result["racks"][1:]],
+                         [previous.isoformat() + "Z", None])
         self.assertEqual(result["inbox"]["counts"], {"invalid": 1, "pending": 1})
         self.assertEqual(result["minute"], self.minute.isoformat().replace("+00:00", "Z"))
+        self.assertEqual(result["sample_counts"], {"2": 1})
+        with self.sessions() as session:
+            PowerMinuteCoverage.__table__.drop(bind=session.get_bind())
+        with self.sessions() as session, patch("api.routers.dashboard.SQLiteInbox",
+                                                return_value=self.inbox):
+            self.assertIsNone(snapshot(1, session)["sample_counts"])
 
     def test_existing_inbox_keeps_frames_when_result_column_is_added(self) -> None:
         path = self.inbox_path.parent / "legacy.db"

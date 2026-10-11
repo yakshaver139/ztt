@@ -31,7 +31,8 @@ class SupervisorTest(unittest.TestCase):
             else:
                 raise KeyboardInterrupt
 
-        with patch.dict("os.environ", {"BMS_TOKEN": "test"}), \
+        with patch.dict("os.environ", {"BMS_TOKEN": "test",
+                                    "BMS_FILTER_POWER_SPIKES": "0"}), \
                 patch("jobs.run_power_ingest.get_context", return_value=context), \
                 patch("jobs.run_power_ingest.signal.signal", side_effect=register), \
                 patch("jobs.run_power_ingest.time.sleep", side_effect=sleep):
@@ -40,6 +41,14 @@ class SupervisorTest(unittest.TestCase):
         worker.kill.assert_called_once_with()
         collector.kill.assert_not_called()
         replacement.start.assert_called_once_with()
+        self.assertEqual(context.Process.call_args_list[1].kwargs["args"],
+                         (1, 30.0, 3600.0, False))
+
+    def test_rejects_invalid_spike_filter_flag(self) -> None:
+        with patch.dict("os.environ", {"BMS_TOKEN": "test",
+                                    "BMS_FILTER_POWER_SPIKES": "maybe"}):
+            with self.assertRaisesRegex(SystemExit, "BMS_FILTER_POWER_SPIKES must be 0 or 1"):
+                main()
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.database import SessionLocal
-from db.models import FinalizedPowerMinute, PowerDevice, PowerReading
+from db.models import FinalizedPowerMinute, PowerDevice, PowerMinuteCoverage, PowerReading
 from ingestion.inbox import Inbox, Message, SQLiteInbox
 from ingestion.stream_client import DatacenterStream
 from lib.logging import get_logger
@@ -100,6 +100,7 @@ class PowerWorker:
         *,
         lateness_seconds: float = 30,
         retention_seconds: float = 3600,
+        filter_spikes: bool = True,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._data_center_id = data_center_id
@@ -107,9 +108,10 @@ class PowerWorker:
         self._session_factory = session_factory
         self._lateness = timedelta(seconds=lateness_seconds)
         self._retention = timedelta(seconds=retention_seconds)
+        self._filter_spikes = filter_spikes
         self._clock = clock
         self._cursor = 0
-        self._devices: set[int] | None = None
+        self._devices: dict[int, float] | None = None
         self._samples: dict[datetime, dict[tuple[int, datetime], float]] = {}
         self._message_ids: dict[datetime, list[int]] = {}
         self._last_cleanup = self._clock()
@@ -125,12 +127,17 @@ class PowerWorker:
         if self._devices is None:
             with self._session_factory() as session:
                 FinalizedPowerMinute.__table__.create(bind=session.get_bind(), checkfirst=True)
-                self._devices = set(session.scalars(select(PowerDevice.id).where(
+                PowerMinuteCoverage.__table__.create(bind=session.get_bind(), checkfirst=True)
+                rows = session.execute(select(
+                    PowerDevice.id, PowerDevice.capacity_limit_kw,
+                ).where(
                     PowerDevice.datacenter_id == self._data_center_id,
                     PowerDevice.device_type == "rack_pdu",
-                )))
+                ))
+                self._devices = {device_id: capacity for device_id, capacity in rows}
             if not self._devices:
                 raise RuntimeError("no rack PDUs for this datacenter; run make seed first")
+            logger.info("power spike filter enabled=%s", self._filter_spikes)
 
         messages = self._inbox.claim(self._data_center_id, self._cursor, 500)
         with self._session_factory() as session:
@@ -164,17 +171,34 @@ class PowerWorker:
         minute = timestamp.replace(second=0, microsecond=0)
         deadline = minute + timedelta(minutes=1) + self._lateness
         if message.received_at >= deadline:
+            logger.warning("late power reading: device=%s observed=%s received=%s deadline=%s",
+                           device_id, timestamp.isoformat(), message.received_at.isoformat(),
+                           deadline.isoformat())
             return self._reject(message, "late")
         minute_key = minute.replace(tzinfo=None)
         if session.get(FinalizedPowerMinute, (self._data_center_id, minute_key)):
             return self._reject(message, "finalized")
-        samples = self._samples.setdefault(minute, {})
+        samples = self._samples.get(minute, {})
         key = (device_id, timestamp)
         if key in samples:
+            if samples[key] != watts:
+                logger.warning(
+                    "conflicting power reading: device=%s observed=%s kept_watts=%s ignored_watts=%s",
+                    device_id, timestamp.isoformat(), samples[key], watts,
+                )
+                return self._reject(message, "conflicting_duplicate")
             return self._reject(message, "duplicate")
-        samples[key] = watts
+        capacity_watts = self._devices[device_id] * 1000
+        # shortcut: 2x capacity is a heuristic, replace it when calibrated limits are available.
+        if self._filter_spikes and watts > 2 * capacity_watts:
+            logger.warning("power spike ignored: device=%s observed=%s watts=%s capacity_watts=%s",
+                           device_id, timestamp.isoformat(), watts, capacity_watts)
+            return self._reject(message, "spike")
+        self._samples.setdefault(minute, {})[key] = watts
         self._message_ids.setdefault(minute, []).append(message.id)
         self.stats["accepted"] += 1
+        if message.received_at - timestamp > timedelta(seconds=1):
+            self.stats["delayed"] += 1
 
     def _finalize_ready(self, watermark: datetime) -> None:
         for minute in sorted(self._samples):
@@ -182,12 +206,13 @@ class PowerWorker:
                 break
             ids = self._message_ids[minute]
             minute_key = minute.replace(tzinfo=None)
+            totals: dict[int, tuple[float, int]] = {}
+            for (device_id, _timestamp), watts in self._samples[minute].items():
+                total, count = totals.get(device_id, (0.0, 0))
+                totals[device_id] = (total + watts, count + 1)
+            histogram = dict(sorted(Counter(count for _, count in totals.values()).items()))
             with self._session_factory() as session:
                 if not session.get(FinalizedPowerMinute, (self._data_center_id, minute_key)):
-                    totals: dict[int, tuple[float, int]] = {}
-                    for (device_id, _timestamp), watts in self._samples[minute].items():
-                        total, count = totals.get(device_id, (0.0, 0))
-                        totals[device_id] = (total + watts, count + 1)
                     for device_id, (total, count) in totals.items():
                         session.merge(PowerReading(
                             device_id=device_id, timestamp=minute_key, watts=total / count,
@@ -195,9 +220,17 @@ class PowerWorker:
                     session.add(FinalizedPowerMinute(
                         datacenter_id=self._data_center_id, timestamp=minute_key,
                     ))
+                    session.add(PowerMinuteCoverage(
+                        datacenter_id=self._data_center_id, timestamp=minute_key,
+                        sample_counts=histogram,
+                    ))
                     session.commit()
             self._inbox.ack(ids)
             self.stats["finalized_minutes"] += 1
-            logger.info("finalized power minute %s: %s samples", minute.isoformat(), len(ids))
+            logger.info(
+                "finalized power minute %s: samples=%s devices=%s/%s sample_counts=%s counters=%s",
+                minute.isoformat(), len(ids), len(totals), len(self._devices),
+                histogram, dict(self.stats),
+            )
             del self._samples[minute]
             del self._message_ids[minute]

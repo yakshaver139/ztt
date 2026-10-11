@@ -84,10 +84,15 @@ hour by default (`BMS_INBOX_RETENTION_HOURS`). A completed minute and its
 readings commit together. Only then are its stored events acknowledged, so a worker
 restart can replay unfinished work without writing the minute twice.
 
-The worker logs rejected frames by reason, minute completions, and periodic
-counters. Invalid, unknown-device, future-dated (over one minute), duplicate,
-and late frames are acknowledged without contributing to an average. A frame
+The worker logs rejected frames by reason, minute completions (including sample
+counts per device), and periodic counters. Invalid, unknown-device, future-dated
+(over one minute), duplicate, and late frames are acknowledged without contributing
+to an average. Conflicting repeats keep the first reading. With
+`BMS_FILTER_POWER_SPIKES=1` (the default), readings above twice the rack PDU's
+rated capacity are also dropped as spikes. Set it to `0` and restart ingestion
+to disable this filter. Other values fail at startup. A frame
 received after a minute's deadline is late even if the worker was backlogged.
+Sparse device-minutes use only their valid observed samples; no values are filled in.
 The BMS has no replay: frames sent while the collector is disconnected, or lost
 before the inbox commit, cannot be recovered. Run `make clean` only when both
 processes are stopped and you intend to discard all stored telemetry. `make seed`
@@ -102,12 +107,15 @@ make run-api              # http://localhost:8000/docs
 
 Open **http://localhost:8000/dashboard** for a live, five-second polling view of
 the latest finalized minute. It shows rack load against capacity, a per-hall rack
-PDU heat map, coverage, snapshot age, capacity breaches, inbox backlog, and
-retained accept/reject counts. Use `?datacenter_id=1` to choose a datacenter.
+PDU heat map, device coverage, accepted-sample counts per reporting device,
+snapshot age, capacity breaches, inbox backlog, and retained accept/reject counts.
+Use `?datacenter_id=1` to choose a datacenter.
 The snapshot stays blank until a minute is finalized (normally 30 seconds after
 its end). Missing devices stay marked as missing. Rejection counts begin with
 frames processed after the inbox adds its `result` column; older acknowledged
-frames appear as `legacy` until cleanup removes them.
+frames appear as `legacy` until cleanup removes them. Sample-count histograms
+are available for minutes finalized after this change; older minutes show
+"unavailable" without changing their stored power averages.
 
 The application database and inbox are separate SQLite files under `data/`
 (git-ignored). `make clean` deletes both, and `make seed` rebuilds the

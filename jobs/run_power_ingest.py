@@ -26,9 +26,10 @@ def _collect(token: str, data_center_id: int, url: str | None) -> None:
         raise SystemExit(2) from exc
 
 
-def _work(data_center_id: int, lateness: float, retention: float) -> None:
+def _work(data_center_id: int, lateness: float, retention: float,
+          filter_spikes: bool) -> None:
     PowerWorker(data_center_id, lateness_seconds=lateness,
-                retention_seconds=retention).run()
+                retention_seconds=retention, filter_spikes=filter_spikes).run()
 
 
 def main() -> None:
@@ -42,6 +43,9 @@ def main() -> None:
     data_center_id = int(os.getenv("BMS_DATACENTER_ID", "1"))
     lateness = float(os.getenv("BMS_ALLOWED_LATENESS_SECONDS", "30"))
     retention = float(os.getenv("BMS_INBOX_RETENTION_HOURS", "1")) * 3600
+    spike_flag = os.getenv("BMS_FILTER_POWER_SPIKES", "1")
+    if spike_flag not in ("0", "1"):
+        raise SystemExit("BMS_FILTER_POWER_SPIKES must be 0 or 1")
     if not math.isfinite(lateness) or not math.isfinite(retention):
         raise SystemExit("lateness and retention must be finite")
     if lateness < 0 or retention <= 0:
@@ -49,7 +53,7 @@ def main() -> None:
     ctx = get_context("spawn")
     targets = {
         "collector": (_collect, (token, data_center_id, os.getenv("BMS_WS_URL"))),
-        "worker": (_work, (data_center_id, lateness, retention)),
+        "worker": (_work, (data_center_id, lateness, retention, spike_flag == "1")),
     }
     children = {name: ctx.Process(target=target, args=args, name=name)
                 for name, (target, args) in targets.items()}
