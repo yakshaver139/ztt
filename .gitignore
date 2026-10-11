@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local SQLite database (regenerate with `make seed`)
+*.db
+*.db-journal
+data/
