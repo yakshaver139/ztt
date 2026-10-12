@@ -1,0 +1,38 @@
+sqlite3 -bail -header -column :memory: < power_output_diagnostics.sql
+             diagnostic
+------------------------------------
+Capture windows and modeled coverage
+ run           first_minute                last_minute          minutes  devices  device_minutes
+------  --------------------------  --------------------------  -------  -------  --------------
+before  2026-10-12 10:52:00.000000  2026-10-12 10:56:00.000000        5     1000            4997
+after   2026-10-12 11:14:00.000000  2026-10-12 11:17:00.000000        4     1000            4000
+                 diagnostic
+--------------------------------------------
+Modeled averages relative to device capacity
+ run    device_minutes  missing_capacity  over_capacity  over_capacity_pct  over_2x_capacity  max_capacity_multiple  max_kw
+------  --------------  ----------------  -------------  -----------------  ----------------  ---------------------  ------
+before            4997                 0            797              15.95               736                  30.66  459.96
+after             4000                 0              0                0.0                 0                   0.67   10.08
+            diagnostic
+-----------------------------------
+Capacity breaches by modeled minute
+ run              minute            devices  over_capacity  over_2x_capacity  max_capacity_multiple
+------  --------------------------  -------  -------------  ----------------  ---------------------
+before  2026-10-12 10:52:00.000000      997             28                28                  30.66
+before  2026-10-12 10:53:00.000000     1000            198               185                   9.84
+before  2026-10-12 10:54:00.000000     1000            181               167                  11.53
+before  2026-10-12 10:55:00.000000     1000            200               177                  11.22
+before  2026-10-12 10:56:00.000000     1000            190               179                  14.16
+after   2026-10-12 11:14:00.000000     1000              0                 0                   0.67
+after   2026-10-12 11:15:00.000000     1000              0                 0                   0.67
+after   2026-10-12 11:16:00.000000     1000              0                 0                   0.67
+after   2026-10-12 11:17:00.000000     1000              0                 0                   0.67
+                      diagnostic
+------------------------------------------------------
+Fixed run: recorded accepted samples per device-minute
+          minute            devices_with_samples  accepted_samples  mean_samples_per_device  min_samples_per_device  max_samples_per_device
+--------------------------  --------------------  ----------------  -----------------------  ----------------------  ----------------------
+2026-10-12 11:14:00.000000                  1000              9280                     9.28                       6                      10
+2026-10-12 11:15:00.000000                  1000             11177                    11.18                       7                      12
+2026-10-12 11:16:00.000000                  1000             11121                    11.12                       8                      12
+2026-10-12 11:17:00.000000                  1000             11170                    11.17                       7                      12

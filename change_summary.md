@@ -59,6 +59,19 @@ The retained feed was captured in a diagnostic run on 11 October 2026. The run
 showed 5,067 exact repeats, 20,843 delayed readings, 1,132 implausible spikes, and uneven sample coverage. The diagnostic queries are
 in `power_ingest_diagnostics.sql` and can be rerun with `make diagnostics < diagnostics.txt`. The run does not establish whether BMS disconnects occur, and it does not prove out-of-order delivery. The diagnostic queries select the largest capacity breach and inspect that rack and minute.
 
+## Modeled output comparison
+
+`make output-diagnostics` compares the older `data/model_dc_6e63013.db` snapshot
+with `data/model_dc.db`, captured after the fixes with spike filtering enabled.
+The query is in `power_output_diagnostics.sql`; its saved output is
+`output_diagnostics.txt`. A device-minute is one stored average for one device
+and one minute.
+
+| Snapshot | Stored UTC minutes | Device-minutes | Above rated capacity | Above 2x capacity | Highest / capacity |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Before fixes | 2026-10-12 10:52–10:56 | 4,997 | 797 (15.95%) | 736 | 30.66x |
+| After fixes | 2026-10-12 11:14–11:17 | 4,000 | 0 (0%) | 0 | 0.67x |
+
 ## Processes and storage
 
 | Process | Runs | Reads | Writes |
@@ -108,3 +121,7 @@ database files; stop ingestion before using it.
 - The finalized-minute marker prevents sa second average after a worker restart, but it  does not prevent a second average if the
    worker is stopped and restarted before the minute is finalized.
 - Further separation of the collector and worker into independent services is possible, but the current implementation runs them in a single supervisor process. The inbox is durable and can be shared between separate processes if desired.
+- No configuration is provided for multiple datacenters or multiple workers per datacenter. The claim protocol assumes one worker per datacenter; parallel workers would need ownership or lease handling.
+- No confidence level or quality-of-service metrics are reported. The worker logs rejected frames by reason, minute completions (including sample counts per device), and periodic counters.
+- No heartbeat or liveness checks are implemented. Ideally the supervisor would report the status of its child processes to a monitoring system, and the worker would report its progress on backlog replay and minute finalization.
+- No recomputation of existing stored averages is performed. The worker does not recalculate averages for previously finalized minutes, even if events come in later that would have contributed to those averages.

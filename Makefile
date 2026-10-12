@@ -1,4 +1,4 @@
-.PHONY: help install seed ingest kill-worker kill-ws bms-process check-ingest inbox-status inbox-backlog power-status power-minutes power-readings device-readings rack-readings run-api clean
+.PHONY: help install seed ingest kill-worker kill-ws bms-process check-ingest inbox-status inbox-backlog power-status power-minutes power-readings device-readings rack-readings output-diagnostics run-api clean
 
 help:
 	@echo "Targets:"
@@ -16,6 +16,7 @@ help:
 	@echo "  power-readings  show the five latest readings"
 	@echo "  device-readings  show the five latest readings for DEVICE_ID"
 	@echo "  rack-readings  show up to 100 highest readings and capacity for RACK_ID"
+	@echo "  output-diagnostics  compare the before and after modeled power snapshots"
 	@echo "  run-api   uvicorn dev server on :8000 (needs the api extra)"
 	@echo "  clean     delete the local SQLite database"
 
@@ -78,6 +79,9 @@ rack-readings:
 
 make diagnostics:
 	sqlite3 -bail -ifexists -header -column data/model_dc.db < power_ingest_diagnostics.sql
+
+output-diagnostics:
+	sqlite3 -bail -header -column :memory: < power_output_diagnostics.sql
 
 run-api:
 	python -m uvicorn api.main:app --reload
