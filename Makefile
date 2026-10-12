@@ -1,8 +1,9 @@
-.PHONY: help install seed ingest kill-worker kill-ws bms-process check-ingest inbox-status inbox-backlog power-status power-minutes power-readings device-readings rack-readings output-diagnostics run-api clean
+.PHONY: help install test seed ingest kill-worker kill-ws bms-process check-ingest inbox-status inbox-backlog power-status power-minutes power-readings device-readings rack-readings output-diagnostics run-api clean
 
 help:
 	@echo "Targets:"
 	@echo "  install   pip install -e . (add [api] for the server, [ingest] for the ingester)"
+	@echo "  test      run pytest in .venv (install with .[dev] first)"
 	@echo "  seed      build the schema + datacenter fixtures (hierarchy; no readings)"
 	@echo "  ingest    run the power ingester against the telemetry publisher (needs BMS_TOKEN)"
 	@echo "  kill-worker  kill the supervised worker to test automatic restart"
@@ -22,6 +23,9 @@ help:
 
 install:
 	pip install -e .
+
+test:
+	.venv/bin/python -m pytest
 
 # Run Python from the repo root; module paths are top-level (db, jobs, api).
 seed:
