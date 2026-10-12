@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     UniqueConstraint,
 )
@@ -235,6 +236,25 @@ class PowerReading(Base):
     __table_args__ = (
         Index("ix_power_readings_device_id_timestamp", "device_id", "timestamp"),
     )
+
+
+class FinalizedPowerMinute(Base):
+    """A committed minute; unacked inbox messages can be safely replayed."""
+
+    __tablename__ = "finalized_power_minutes"
+
+    datacenter_id = Column(Integer, ForeignKey("datacenters.id"), primary_key=True)
+    timestamp = Column(DateTime, primary_key=True)  # naive UTC, like PowerReading
+
+
+class PowerMinuteCoverage(Base):
+    """Accepted sample-count histogram for a finalized datacenter minute."""
+
+    __tablename__ = "power_minute_coverage"
+
+    datacenter_id = Column(Integer, ForeignKey("datacenters.id"), primary_key=True)
+    timestamp = Column(DateTime, primary_key=True)  # naive UTC
+    sample_counts = Column(JSON, nullable=False)
 
 
 class WeatherReading(Base):

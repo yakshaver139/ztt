@@ -34,11 +34,25 @@ db/         database.py (SQLite), models.py (the schema above)
 api/        FastAPI app — routers / services / repositories (thin layering)
 ingestion/  telemetry stream client + power/weather ingesters
 jobs/       runnable entrypoints: seed_datacenter.py, run_power_ingest.py
-lib/        shared helpers (e.g. lib/retry — reconnect-with-backoff)
+lib/        shared helpers (e.g. lib/retry and lib/logging)
 ```
 
 Packages sit at the repo root; imports are top-level (`db`, `api`, `ingestion`,
 `jobs`, `lib`). Run Python from the repo root.
+
+## Logging
+
+Use the shared logger in any module:
+
+```python
+from lib.logging import get_logger
+
+logger = get_logger(__name__)
+logger.info("Application started")
+```
+
+Logs go to stderr at INFO level by default. If the host application has already
+configured Python logging, that configuration takes precedence.
 
 ## Quick start
 Set up the model data center. This will populate racks, power devices, suites, etc.
@@ -59,6 +73,32 @@ export BMS_DATACENTER_ID=1
 make ingest
 ```
 
+`make ingest` supervises two processes. The stream client yields only parsed events
+with metrics; the collector commits each as JSON to `data/power_inbox.db`. The worker
+claims pending or unfinished events, validates them, deduplicates by device and
+timestamp, and writes one average per device/minute to `data/model_dc.db`.
+Run `make kill-worker` or `make kill-ws` in another terminal to kill the worker or
+WebSocket collector and watch the supervisor restart it.
+Minutes close 30 seconds after their end by default. Change this with
+`BMS_ALLOWED_LATENESS_SECONDS`; acknowledged inbox events are retained for one
+hour by default (`BMS_INBOX_RETENTION_HOURS`). A completed minute and its
+readings commit together. Only then are its stored events acknowledged, so a worker
+restart can replay unfinished work without writing the minute twice.
+
+The worker logs rejected frames by reason, minute completions (including sample
+counts per device), and periodic counters. Invalid, unknown-device, future-dated
+(over one minute), duplicate, and late frames are acknowledged without contributing
+to an average. Conflicting repeats keep the first reading. With
+`BMS_FILTER_POWER_SPIKES=1` (the default), readings above twice the rack PDU's
+rated capacity are also dropped as spikes. Set it to `0` and restart ingestion
+to disable this filter. Other values fail at startup. A frame
+received after a minute's deadline is late even if the worker was backlogged.
+Sparse device-minutes use only their valid observed samples; no values are filled in.
+The BMS has no replay: frames sent while the collector is disconnected, or lost
+before the inbox commit, cannot be recovered. Run `make clean` only when both
+processes are stopped and you intend to discard all stored telemetry. `make seed`
+recreates the application tables but does not clear the inbox.
+
 Add the API server when needed:
 
 ```bash
@@ -66,5 +106,18 @@ pip install -e '.[api]'
 make run-api              # http://localhost:8000/docs
 ```
 
-The database is a single SQLite file at `data/model_dc.db` (git-ignored);
-`make clean` deletes it and `make seed` rebuilds it.
+Open **http://localhost:8000/dashboard** for a live, five-second polling view of
+the latest finalized minute. It shows rack load against capacity, a per-hall rack
+PDU heat map, device coverage, accepted-sample counts per reporting device,
+snapshot age, capacity breaches, inbox backlog, and retained accept/reject counts.
+Use `?datacenter_id=1` to choose a datacenter.
+The snapshot stays blank until a minute is finalized (normally 30 seconds after
+its end). Missing devices stay marked as missing. Rejection counts begin with
+frames processed after the inbox adds its `result` column; older acknowledged
+frames appear as `legacy` until cleanup removes them. Sample-count histograms
+are available for minutes finalized after this change; older minutes show
+"unavailable" without changing their stored power averages.
+
+The application database and inbox are separate SQLite files under `data/`
+(git-ignored). `make clean` deletes both, and `make seed` rebuilds the
+application database.

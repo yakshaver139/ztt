@@ -1,0 +1,129 @@
+sqlite3 -bail -ifexists -header -column data/model_dc.db < power_ingest_diagnostics.sql
+          diagnostic
+-------------------------------
+Inbox status and capture window
+ status    frames           first_received                    last_received
+---------  ------  --------------------------------  --------------------------------
+acked       42089  2026-10-11T20:50:45.228057+00:00  2026-10-11T20:55:24.220007+00:00
+in_flight   13411  2026-10-11T20:54:08.134947+00:00  2026-10-11T20:55:24.222772+00:00
+pending       134  2026-10-11T20:55:24.222986+00:00  2026-10-11T20:55:24.321496+00:00
+         diagnostic
+-----------------------------
+Retained frame shape and size
+frames  invalid_json  shortest_bytes  longest_bytes  average_bytes
+------  ------------  --------------  -------------  -------------
+ 55634             0             260            267          263.8
+device_type  metrics_type  frames
+-----------  ------------  ------
+object       object         55634
+event_type  frames
+----------  ------
+<missing>    55634
+    metric       frames
+---------------  ------
+active_power_kw   55634
+           diagnostic
+--------------------------------
+Raw power values and receipt lag
+frames  devices  min_kw   max_kw   below_2_kw  below_5_kw  over_capacity  over_30_kw  over_100_kw  over_500_kw  min_lag_s  avg_lag_s  max_lag_s  lag_over_1_s  lag_over_30_s
+------  -------  ------  --------  ----------  ----------  -------------  ----------  -----------  -----------  ---------  ---------  ---------  ------------  -------------
+ 55634     1000   0.971  1024.544       11930       40152           1134        1134         1132          280      0.043      3.595     12.347         20843              0
+                  diagnostic
+----------------------------------------------
+Repeat readings by device and observation time
+repeated_frames  conflicting_repeats
+---------------  -------------------
+           5067                    0
+                    diagnostic
+--------------------------------------------------
+Frames per minute, by receipt and observation time
+time_basis       minute       frames
+----------  ----------------  ------
+observed    2026-10-11T20:50    3144
+received    2026-10-11T20:50    3144
+observed    2026-10-11T20:51   12610
+received    2026-10-11T20:51   10528
+observed    2026-10-11T20:52   12486
+received    2026-10-11T20:52   14568
+observed    2026-10-11T20:53   12466
+received    2026-10-11T20:53   11411
+observed    2026-10-11T20:54   12612
+received    2026-10-11T20:54   12634
+observed    2026-10-11T20:55    2316
+received    2026-10-11T20:55    3349
+                 diagnostic
+--------------------------------------------
+Distinct observation times per device-minute
+samples  device_minutes
+-------  --------------
+      1              78
+      2             874
+      3            1044
+      7               1
+      8              12
+      9              66
+     10             379
+     11            1382
+     12            2160
+             diagnostic
+-------------------------------------
+Stored readings and finalized minutes
+readings  devices         first_minute                last_minute          min_kw  max_kw
+--------  -------  --------------------------  --------------------------  ------  -------
+    4000     1000  2026-10-11 20:50:00.000000  2026-10-11 20:53:00.000000   1.016  489.074
+finalized_minutes         first_minute                last_minute
+-----------------  --------------------------  --------------------------
+                4  2026-10-11 20:50:00.000000  2026-10-11 20:53:00.000000
+             diagnostic
+------------------------------------
+Stored readings above rated capacity
+readings  over_capacity
+--------  -------------
+    4000            615
+                 diagnostic
+---------------------------------------------
+Device coverage and outliers by stored minute
+          minute            devices  over_capacity  mean_kw  max_kw
+--------------------------  -------  -------------  -------  -------
+2026-10-11 20:50:00.000000     1000             55   10.556  489.074
+2026-10-11 20:51:00.000000     1000            196   11.744  179.903
+2026-10-11 20:52:00.000000     1000            190   11.668  184.491
+2026-10-11 20:53:00.000000     1000            174   10.934  186.791
+             diagnostic
+-------------------------------------
+Highest stored device-minute averages
+device_id          timestamp           power_kw  capacity_limit_kw
+---------  --------------------------  --------  -----------------
+      347  2026-10-11 20:50:00.000000   489.074               15.0
+       91  2026-10-11 20:50:00.000000   349.657               15.0
+       10  2026-10-11 20:50:00.000000   328.954               15.0
+      288  2026-10-11 20:50:00.000000   306.501               15.0
+      323  2026-10-11 20:50:00.000000   281.302               15.0
+      454  2026-10-11 20:50:00.000000   269.882               15.0
+      485  2026-10-11 20:50:00.000000   255.032               15.0
+      363  2026-10-11 20:50:00.000000   250.371               15.0
+      476  2026-10-11 20:50:00.000000   241.165               15.0
+      491  2026-10-11 20:53:00.000000   186.791               15.0
+      115  2026-10-11 20:52:00.000000   184.491               15.0
+      442  2026-10-11 20:50:00.000000   180.989               15.0
+       89  2026-10-11 20:51:00.000000   179.903               15.0
+      229  2026-10-11 20:52:00.000000   163.406               15.0
+      420  2026-10-11 20:50:00.000000   151.975               15.0
+          diagnostic
+-------------------------------
+Rack 28 and its metering device
+rack_id  rack_name  device_id  capacity_limit_kw
+-------  ---------  ---------  -----------------
+     28  RACK-0028         28               15.0
+               diagnostic
+----------------------------------------
+Rack 28 stored averages around the spike
+                      diagnostic
+------------------------------------------------------
+Rack 28 raw frames around the spike, if still retained
+                        diagnostic
+----------------------------------------------------------
+Rack 28 at 19:34: stored mean versus deduplicated raw mean
+retained_unique_samples  raw_mean_kw  mean_without_spike_kw  stored_mean_kw
+-----------------------  -----------  ---------------------  --------------
+                      1

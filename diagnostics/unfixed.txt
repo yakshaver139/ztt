@@ -1,0 +1,142 @@
+sqlite3 -bail -ifexists -header -column data/model_dc.db < power_ingest_diagnostics.sql
+          diagnostic
+-------------------------------
+Inbox status and capture window
+ status    frames           first_received                    last_received
+---------  ------  --------------------------------  --------------------------------
+acked       52111  2026-10-12T10:52:52.333652+00:00  2026-10-12T10:57:58.320422+00:00
+in_flight   11387  2026-10-12T10:57:05.876237+00:00  2026-10-12T10:57:58.320934+00:00
+         diagnostic
+-----------------------------
+Retained frame shape and size
+frames  invalid_json  shortest_bytes  longest_bytes  average_bytes
+------  ------------  --------------  -------------  -------------
+ 63498             0             260            267          263.8
+device_type  metrics_type  frames
+-----------  ------------  ------
+object       object         63498
+event_type  frames
+----------  ------
+<missing>    63498
+    metric       frames
+---------------  ------
+active_power_kw   63498
+           diagnostic
+--------------------------------
+Raw power values and receipt lag
+frames  devices  min_kw   max_kw   below_2_kw  below_5_kw  over_capacity  over_30_kw  over_100_kw  over_500_kw  min_lag_s  avg_lag_s  max_lag_s  lag_over_1_s  lag_over_30_s
+------  -------  ------  --------  ----------  ----------  -------------  ----------  -----------  -----------  ---------  ---------  ---------  ------------  -------------
+ 63498     1000    0.97  1049.836        3782       18818           1264        1264         1264          866      0.053       3.85     12.445         25270              0
+                  diagnostic
+----------------------------------------------
+Repeat readings by device and observation time
+repeated_frames  conflicting_repeats
+---------------  -------------------
+           5678                    0
+                   diagnostic
+------------------------------------------------
+Out-of-order first deliveries within each device
+backward_steps  first_backward_inbox_id  largest_step_back_seconds
+--------------  -----------------------  -------------------------
+         22077                     4132                     10.122
+                    diagnostic
+--------------------------------------------------
+Frames per minute, by receipt and observation time
+time_basis       minute       frames
+----------  ----------------  ------
+observed    2026-10-12T10:52    2053
+received    2026-10-12T10:52    2053
+observed    2026-10-12T10:53   12435
+received    2026-10-12T10:53   11395
+observed    2026-10-12T10:54   12516
+received    2026-10-12T10:54   11935
+observed    2026-10-12T10:55   12522
+received    2026-10-12T10:55   13095
+observed    2026-10-12T10:56   11445
+received    2026-10-12T10:56   11438
+observed    2026-10-12T10:57   12527
+received    2026-10-12T10:57   13582
+                 diagnostic
+--------------------------------------------
+Distinct observation times per device-minute
+samples  device_minutes
+-------  --------------
+      1              94
+      2             903
+      7               1
+      8              24
+      9             169
+     10             765
+     11            1942
+     12            2099
+             diagnostic
+-------------------------------------
+Stored readings and finalized minutes
+readings  devices         first_minute                last_minute          min_kw  max_kw
+--------  -------  --------------------------  --------------------------  ------  -------
+    4997     1000  2026-10-12 10:52:00.000000  2026-10-12 10:56:00.000000   1.022  459.956
+finalized_minutes         first_minute                last_minute
+-----------------  --------------------------  --------------------------
+                5  2026-10-12 10:52:00.000000  2026-10-12 10:56:00.000000
+             diagnostic
+------------------------------------
+Stored readings above rated capacity
+readings  over_capacity
+--------  -------------
+    4997            797
+                 diagnostic
+---------------------------------------------
+Device coverage and outliers by stored minute
+          minute            devices  over_capacity  mean_kw  max_kw
+--------------------------  -------  -------------  -------  -------
+2026-10-12 10:52:00.000000      997             28   14.048  459.956
+2026-10-12 10:53:00.000000     1000            198    17.24  147.548
+2026-10-12 10:54:00.000000     1000            181   16.843  173.002
+2026-10-12 10:55:00.000000     1000            200   17.446  168.287
+2026-10-12 10:56:00.000000     1000            190   18.397  212.327
+             diagnostic
+-------------------------------------
+Highest stored device-minute averages
+device_id          timestamp           power_kw  capacity_limit_kw
+---------  --------------------------  --------  -----------------
+      436  2026-10-12 10:52:00.000000   459.956               15.0
+      206  2026-10-12 10:52:00.000000   457.555               15.0
+      807  2026-10-12 10:52:00.000000   414.567               15.0
+      224  2026-10-12 10:52:00.000000   411.178               15.0
+      515  2026-10-12 10:52:00.000000   410.296               15.0
+      901  2026-10-12 10:52:00.000000   392.144               15.0
+      262  2026-10-12 10:52:00.000000   387.531               15.0
+      824  2026-10-12 10:52:00.000000   370.757               15.0
+      985  2026-10-12 10:52:00.000000   343.454               15.0
+      845  2026-10-12 10:52:00.000000   337.235               15.0
+      623  2026-10-12 10:52:00.000000   333.353               15.0
+      999  2026-10-12 10:52:00.000000   331.974               15.0
+       98  2026-10-12 10:52:00.000000   316.365               15.0
+      780  2026-10-12 10:52:00.000000    311.88               15.0
+      204  2026-10-12 10:52:00.000000   309.572               15.0
+                       diagnostic
+---------------------------------------------------------
+Rack with the highest stored average relative to capacity
+rack_id  rack_name  device_id         worst_minute         worst_mean_kw  capacity_limit_kw  capacity_multiple
+-------  ---------  ---------  --------------------------  -------------  -----------------  -----------------
+    436  RACK-0436        436  2026-10-12 10:52:00.000000        459.956               15.0              30.66
+                diagnostic
+------------------------------------------
+Stored averages around the selected minute
+rack_id          timestamp           power_kw
+-------  --------------------------  --------
+    436  2026-10-12 10:52:00.000000   459.956
+    436  2026-10-12 10:53:00.000000     8.703
+                        diagnostic
+----------------------------------------------------------
+Raw frames for the selected rack/minute, if still retained
+rack_id  inbox_id            observed_at                       received_at             power_kw
+-------  --------  --------------------------------  --------------------------------  --------
+    436       588  2026-10-12T10:52:52.271960+00:00  2026-10-12T10:52:52.715683+00:00   911.392
+    436      1622  2026-10-12T10:52:57.329124+00:00  2026-10-12T10:52:57.837907+00:00      8.52
+                       diagnostic
+---------------------------------------------------------
+Selected minute: stored mean versus deduplicated raw mean
+rack_id         worst_minute         retained_unique_samples  raw_mean_kw  mean_without_spike_kw  stored_mean_kw
+-------  --------------------------  -----------------------  -----------  ---------------------  --------------
+    436  2026-10-12 10:52:00.000000                        2      459.956                   8.52         459.956
