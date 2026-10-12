@@ -92,6 +92,31 @@ SELECT COALESCE(SUM(frames - 1), 0) AS repeated_frames,
            AS conflicting_repeats
 FROM groups;
 
+SELECT 'Out-of-order first deliveries within each device' AS diagnostic;
+-- shortcut: julianday misses sub-millisecond reversals; use a precise parser if those matter.
+WITH observations AS (
+    SELECT MIN(id) AS id, datacenter_id,
+           json_extract(payload, '$.device.id') AS device_id,
+           json_extract(payload, '$.observed_at') AS observed_at
+    FROM inbox_db.inbox
+    WHERE json_valid(payload)
+    GROUP BY datacenter_id, device_id, observed_at
+), deliveries AS (
+    SELECT id, julianday(observed_at) AS observed_time,
+           LAG(julianday(observed_at)) OVER (
+               PARTITION BY datacenter_id, device_id ORDER BY id
+           ) AS previous_observed_time
+    FROM observations
+    WHERE typeof(device_id) = 'integer' AND typeof(observed_at) = 'text'
+      AND julianday(observed_at) IS NOT NULL
+)
+SELECT COUNT(*) AS backward_steps,
+       MIN(id) AS first_backward_inbox_id,
+       ROUND(MAX((previous_observed_time - observed_time) * 86400), 3)
+           AS largest_step_back_seconds
+FROM deliveries
+WHERE observed_time < previous_observed_time;
+
 SELECT 'Frames per minute, by receipt and observation time' AS diagnostic;
 SELECT 'received' AS time_basis, substr(received_at, 1, 16) AS minute,
        COUNT(*) AS frames

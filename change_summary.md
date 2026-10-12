@@ -7,6 +7,8 @@ between the BMS feed and the application database. The change adds the inbox
 interface and SQLite implementation, a collector and worker, a committed-minute
 marker, shared logging, and tests for replay and failure recovery.
 
+![high level design](design.png)
+
 ## End-to-end flow
 
 `BMS WebSocket → stream client → collector → SQLite inbox → worker → application SQLite database`
@@ -24,13 +26,15 @@ marker, shared logging, and tests for replay and failure recovery.
    filtering is enabled, readings above twice device capacity are also dropped.
 4. Accepted readings remain `in_flight` in the inbox while the worker accumulates
    them in memory by device and minute. A minute closes 30 seconds after its end
-   by default. When replaying a backlog, the worker uses message receipt times
+   by default, allowing some buffer for late and out of observation-time messages. When replaying a backlog, the worker uses message receipt times
    to avoid closing a minute before earlier received messages have been examined.
 5. For each device with accepted readings, the worker commits one average to
    `power_readings`, a row in `finalized_power_minutes`, and the accepted-sample
    histogram in `power_minute_coverage` in the same application database
    transaction. Only after that commit does it mark the contributing
-   inbox messages `acked`. Minute logs include the sample-count distribution and
+   inbox messages `acked`. i.e. this is a transactional failure point: if the application commit fails, the inbox messages remain unacknowledged and can be replayed after restart.
+
+   Minute logs include the sample-count distribution and
    device coverage; sparse minutes average only their valid observed samples.
 
 ## BMS feed reliability fixes
@@ -49,6 +53,11 @@ Tests cover repeats, conflicts, delayed and out-of-order arrivals, spike rejecti
 the disabled flag, sparse coverage, and a minute containing only a spike. The
 twice-capacity cutoff is a heuristic pending calibrated device limits. Existing
 stored averages are not recalculated by this change.
+
+## How these issues were discovered
+The retained feed was captured in a diagnostic run on 11 October 2026. The run
+showed 5,067 exact repeats, 20,843 delayed readings, 1,132 implausible spikes, and uneven sample coverage. The diagnostic queries are
+in `power_ingest_diagnostics.sql` and can be rerun with `make diagnostics < diagnostics.txt`. The run does not establish whether BMS disconnects occur, and it does not prove out-of-order delivery. The diagnostic queries select the largest capacity breach and inspect that rack and minute.
 
 ## Processes and storage
 
@@ -90,3 +99,12 @@ and run `make ingest`. Optional settings are `BMS_WS_URL`,
 `1`; set `0` to disable). `make seed` recreates application
 tables but leaves the inbox in place. `make clean` deletes the two main SQLite
 database files; stop ingestion before using it.
+
+## Limitations / Not implemented
+
+- The worker does not yet check for missing BMS readings. It does not attempt to
+   detect or fill in missing samples, and it does not track the last received
+   observation time per device (i.e. it does not know if a device has stopped sending readings / have a sense of queue depth for a device)
+- The finalized-minute marker prevents sa second average after a worker restart, but it  does not prevent a second average if the
+   worker is stopped and restarted before the minute is finalized.
+- Further separation of the collector and worker into independent services is possible, but the current implementation runs them in a single supervisor process. The inbox is durable and can be shared between separate processes if desired.

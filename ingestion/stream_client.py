@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Iterator, Protocol, runtime_checkable
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
+from lib.logging import get_logger
+
 Event = dict
+
+logger = get_logger(__name__)
 
 
 class StreamAuthError(Exception):
@@ -38,9 +43,14 @@ class RealDatacenterStream:
                 if ack.get("type") != "authenticated":
                     raise StreamAuthError(f"authentication failed: {ack!r}")
                 for raw in ws:
-                    event = json.loads(raw)
-                    if "metrics" in event:
-                        yield event
+                    try:
+                        event = json.loads(raw)
+                        if "metrics" in event:
+                            yield event
+                        else:
+                            logger.warning("no metrics present in event %s", event)
+                    except JSONDecodeError as exc:
+                        logger.warning("malformed BMS JSON event: %s", exc)
         except ConnectionClosed as exc:
             # 1008 = policy violation (bad token / already connected): don't retry.
             if getattr(exc, "code", None) == 1008:

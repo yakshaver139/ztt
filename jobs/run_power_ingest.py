@@ -59,11 +59,13 @@ def main() -> None:
                 for name, (target, args) in targets.items()}
     previous_sigterm = signal.signal(signal.SIGTERM, _stop)
     previous_sigurg = signal.getsignal(signal.SIGURG)
+    previous_sigusr1 = signal.getsignal(signal.SIGUSR1)
     try:
         for child in children.values():
             child.start()
         # SIGURG is ignored by supervisors started before this handler existed.
         signal.signal(signal.SIGURG, lambda _signum, _frame: children["worker"].kill())
+        signal.signal(signal.SIGUSR1, lambda _signum, _frame: children["collector"].kill())
         while True:
             time.sleep(1)
             for name, child in list(children.items()):
@@ -82,6 +84,7 @@ def main() -> None:
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGURG, previous_sigurg)
+        signal.signal(signal.SIGUSR1, previous_sigusr1)
         for child in children.values():
             if child.pid is None:
                 continue

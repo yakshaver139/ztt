@@ -1,4 +1,4 @@
-.PHONY: help install seed ingest kill-worker bms-process check-ingest inbox-status inbox-backlog power-status power-minutes power-readings device-readings rack-readings run-api clean
+.PHONY: help install seed ingest kill-worker kill-ws bms-process check-ingest inbox-status inbox-backlog power-status power-minutes power-readings device-readings rack-readings run-api clean
 
 help:
 	@echo "Targets:"
@@ -6,6 +6,7 @@ help:
 	@echo "  seed      build the schema + datacenter fixtures (hierarchy; no readings)"
 	@echo "  ingest    run the power ingester against the telemetry publisher (needs BMS_TOKEN)"
 	@echo "  kill-worker  kill the supervised worker to test automatic restart"
+	@echo "  kill-ws  kill the WebSocket collector to test automatic restart"
 	@echo "  bms-process  show the process connected to BMS_WS_URL"
 	@echo "  check-ingest  run all SQLite checks"
 	@echo "  inbox-status  count messages by status and show the latest receipt"
@@ -32,6 +33,11 @@ kill-worker:
 	@set -- $$(pgrep -f ' -m jobs[.]run_power_ingest$$'); \
 	if [ "$$#" -ne 1 ]; then echo "Expected one running ingest supervisor; found $$#" >&2; exit 1; fi; \
 	kill -URG "$$1"
+
+kill-ws:
+	@set -- $$(pgrep -f ' -m jobs[.]run_power_ingest$$'); \
+	if [ "$$#" -ne 1 ]; then echo "Expected one running ingest supervisor; found $$#" >&2; exit 1; fi; \
+	kill -USR1 "$$1"
 
 bms-process:
 	@url=$${BMS_WS_URL:?Set BMS_WS_URL to the BMS base URL}; \

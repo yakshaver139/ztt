@@ -77,7 +77,8 @@ make ingest
 with metrics; the collector commits each as JSON to `data/power_inbox.db`. The worker
 claims pending or unfinished events, validates them, deduplicates by device and
 timestamp, and writes one average per device/minute to `data/model_dc.db`.
-Run `make kill-worker` in another terminal to kill the worker and watch the supervisor restart it.
+Run `make kill-worker` or `make kill-ws` in another terminal to kill the worker or
+WebSocket collector and watch the supervisor restart it.
 Minutes close 30 seconds after their end by default. Change this with
 `BMS_ALLOWED_LATENESS_SECONDS`; acknowledged inbox events are retained for one
 hour by default (`BMS_INBOX_RETENTION_HOURS`). A completed minute and its
